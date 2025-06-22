@@ -68,9 +68,7 @@ class LocationHelper{
     }
 
     fun getCurSpeed(): Float {
-        val lastLoc = mLocations.firstOrNull()
-        if(lastLoc == null)
-            return -1.0f
+        val lastLoc = mLocations.firstOrNull() ?: return -1.0f
         return lastLoc.speed
     }
 
