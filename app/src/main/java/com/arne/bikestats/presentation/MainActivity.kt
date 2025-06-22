@@ -7,19 +7,17 @@
 package com.arne.bikestats.presentation
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.MotionEvent.ACTION_UP
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +25,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Snackbar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Devices
@@ -43,6 +39,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.InputDeviceCompat
+import androidx.core.view.MotionEventCompat
 import androidx.health.services.client.HealthServices
 import androidx.health.services.client.MeasureCallback
 import androidx.health.services.client.data.Availability
@@ -53,12 +52,11 @@ import androidx.health.services.client.data.DeltaDataType
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
-import com.arne.bikestats.R
 import com.arne.bikestats.presentation.theme.BikeStatsTheme
+import com.arne.bikestats.utils.LocationHelper
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationListener
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
@@ -66,14 +64,19 @@ import java.util.Locale
 import java.util.Timer
 import java.util.TimerTask
 
+
 interface ViewModel {
-    var mCurSpeed: Double
-    var mCurBpm: Double
+    var mCurSpeed: Double // current speed
+    var mAvgSpeed: Double // avg speed over the last mAvgDistance meters
+    var mAvgDistance: Int // see mAvgSpeed
+    var mCurBpm: Double // current heart rate
     var mCurSpeedValid: Boolean
     var mCurBpmValid: Boolean
-    var mKeepScreenOn: Boolean
-    var mMaxSpeed: Double
-    var mMaxBpm: Double
+    var mKeepScreenOn: Boolean // keep screen on flag
+    var mMaxSpeed: Double // max speed since last reset
+    var mMaxBpm: Double // max heart rate since last reset
+    var mTotalDistance: Double // total distance since last reset
+    var mPaceMode: Boolean // show pace (as opposed to speed)
 }
 
 class MainActivity : ComponentActivity(), ViewModel {
@@ -84,11 +87,18 @@ class MainActivity : ComponentActivity(), ViewModel {
     override var mCurSpeedValid by mutableStateOf(false)
     override var mCurBpmValid by mutableStateOf(false)
     override var mKeepScreenOn by mutableStateOf(false)
-
-    var mLastLocation: Location? = null
+    override var mAvgSpeed by mutableStateOf(-1.0)
+    override var mAvgDistance by mutableStateOf(300)
+    override var mTotalDistance by mutableStateOf(-1.0)
+    override var mPaceMode by mutableStateOf(false)
 
     lateinit var fusedLocationProviderClient: FusedLocationProviderClient
 
+    val mLocations = LocationHelper()
+
+    companion object{
+        val TAG = "BikeStats"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -148,7 +158,7 @@ class MainActivity : ComponentActivity(), ViewModel {
             LocationServices.getFusedLocationProviderClient(applicationContext)
         val locationCallback = object : LocationCallback() {
             override fun onLocationAvailability(p0: LocationAvailability) {
-                Log.i("BikeStats", "onLocationAvailability $p0")
+                Log.i(TAG, "onLocationAvailability $p0")
                 if (!p0.isLocationAvailable) {
                     mCurSpeedValid = false
                     mCurSpeed = 0.0
@@ -158,23 +168,11 @@ class MainActivity : ComponentActivity(), ViewModel {
             override fun onLocationResult(p0: LocationResult) {
                 if (p0.lastLocation == null)
                     return
-                if (mLastLocation == null) {
-                    mLastLocation = p0.lastLocation
-                    return
-                }
-                if(p0.lastLocation!!.hasSpeed()){
-                    mCurSpeed = p0.lastLocation!!.speed.toDouble()
-                    Log.i("BikeStats", "Received new speed: $mCurSpeed; ${p0.lastLocation!!.speedAccuracyMetersPerSecond}")
-                }else {
-                    val distance = p0.lastLocation!!.distanceTo(mLastLocation!!)
-                    val timeDiff = p0.lastLocation!!.time - mLastLocation!!.time
-                    if (timeDiff < 50) {
-                        return
-                    }
-                    mCurSpeed = (1000 * distance / timeDiff).toDouble()
-                }
+                mLocations.addLocationResult(p0.lastLocation!!)
+                mCurSpeed = mLocations.getCurSpeed().toDouble()
+                mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
+                mTotalDistance = mLocations.getTotalDistance()
                 mCurSpeedValid = true
-                mLastLocation = p0.lastLocation
                 if (mCurSpeed > mMaxSpeed) {
                     mMaxSpeed = mCurSpeed
                 }
@@ -217,6 +215,12 @@ class MainActivity : ComponentActivity(), ViewModel {
                         if (mTapCount == 3) {
                             mMaxSpeed = 0.0
                             mMaxBpm = 0.0
+                            mTotalDistance = 0.0
+                            mLocations.clear()
+                        }
+                        if (mTapCount == 4) {
+                            mPaceMode = !mPaceMode
+                            Log.i(TAG, "Switching to pacemode: $mPaceMode")
                         }
                         mTapCount = 0
                     }
@@ -226,7 +230,51 @@ class MainActivity : ComponentActivity(), ViewModel {
         }
         return super.dispatchTouchEvent(ev)
     }
+
+    var mScrollAmount = 0.0
+    override fun dispatchGenericMotionEvent(ev: MotionEvent?): Boolean {
+        if (ev != null && ev.action == MotionEvent.ACTION_SCROLL
+            && ev.isFromSource(InputDeviceCompat.SOURCE_ROTARY_ENCODER)
+            && mPaceMode)
+        {
+            val delta = ev.getAxisValue(MotionEventCompat.AXIS_SCROLL)
+            mScrollAmount += delta
+            if(mScrollAmount > 0.4){
+                if(mAvgDistance <= 10){
+                }else if(mAvgDistance <= 100){
+                    mAvgDistance -= 10
+                }else if(mAvgDistance <= 1000){
+                    mAvgDistance -= 100
+                }else {
+                    mAvgDistance -= 1000
+                }
+                mScrollAmount = 0.0
+                mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
+                val vibrator = baseContext?.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                return true
+            }
+            if(mScrollAmount < -0.4){
+                if(mAvgDistance >= 1000){
+                    mAvgDistance += 1000
+                }else if(mAvgDistance >= 100){
+                    mAvgDistance += 100
+                }else{
+                    mAvgDistance += 10
+                }
+                mScrollAmount = 0.0
+                mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
+                val vibrator = baseContext?.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+
+                return true
+            }
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
 }
+
+
 
 @Composable
 fun WearApp(viewModel: ViewModel) {
@@ -239,8 +287,13 @@ fun WearApp(viewModel: ViewModel) {
         ) {
             TimeText()
             Column {
-                Speed(viewModel = viewModel)
+                if(viewModel.mPaceMode){
+                    Pace(viewModel = viewModel)
+                }else {
+                    Speed(viewModel = viewModel)
+                }
                 Bpm(viewModel = viewModel)
+                Distance(viewModel = viewModel)
                 Text("")
                 DataQuality(viewModel = viewModel)
             }
@@ -278,6 +331,58 @@ fun Speed(viewModel: ViewModel) {
                 ),
             )
         }
+    }
+}
+
+@Composable
+fun Pace(viewModel: ViewModel) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val avgPace = com.arne.bikestats.utils.Pace.fromSpeed(viewModel.mAvgSpeed)
+
+        Text(
+            color = MaterialTheme.colors.primary,
+            text = if (viewModel.mAvgSpeed < 0.2) "-" else ""+avgPace.paceMin+":"+"%02d".format(avgPace.paceSec),
+            style = TextStyle(
+                fontSize = 48.sp,
+            )
+        )
+        Column {
+            Text(
+                color = MaterialTheme.colors.primary,
+                text = "min/km",
+                style = TextStyle(
+                    fontSize = 12.sp,
+                ),
+            )
+            Text(
+                color = MaterialTheme.colors.primary,
+                text = ""+viewModel.mAvgDistance+" m",
+                style = TextStyle(
+                    fontSize = 12.sp,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+fun Distance(viewModel: ViewModel) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            color = MaterialTheme.colors.secondary,
+            text = if (viewModel.mTotalDistance < 0) "- km" else String.format(Locale.ROOT, "%.2f", viewModel.mTotalDistance / 1000)+" km",
+            style = TextStyle(
+                fontSize = 24.sp,
+            )
+        )
     }
 }
 
@@ -341,7 +446,11 @@ fun DefaultPreview() {
     WearApp(object : ViewModel {
         override var mCurBpm: Double = 63.0
         override var mCurSpeed: Double = 6.0
+        override var mAvgSpeed: Double = 0.2
+        override var mAvgDistance: Int = 200
         override var mMaxBpm: Double = 163.0
+        override var mTotalDistance: Double = 13024.2
+        override var mPaceMode: Boolean = true
         override var mMaxSpeed: Double = 14.0
         override var mCurBpmValid: Boolean = true
         override var mCurSpeedValid: Boolean = true
