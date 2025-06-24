@@ -2,6 +2,8 @@ package com.arne.bikestats.utils
 
 import android.location.Location
 import android.util.Log
+import kotlin.math.sqrt
+
 
 data class Pace(val paceMin: Int, val paceSec: Int){
     companion object{
@@ -28,15 +30,34 @@ class LocationHelper{
     var mLocations = ArrayDeque<Location>()
     var mTotalDistance = 0.0
 
+
+
+
     fun addLocationResult(location: Location){
         if(location.accuracy > ACCURACY_THRESHOLD){
             Log.i(TAG, "Location above accuracy threshold: ${location.accuracy}. Discarding")
             return
         }
-        val lastLoc = mLocations.firstOrNull()
-        if(lastLoc != null){
-            mTotalDistance += lastLoc.distanceTo(location)
+        if(mLocations.count() == 0){
+            mLocations.addFirst(location)
+            return
         }
+        val lastLoc = mLocations.first()
+        if(lastLoc.time > location.time){
+            Log.w(TAG, "Time is flowing in the wrong direction!")
+            return
+        }
+        val diff = lastLoc.distanceTo(location)
+
+        if(diff*0.2 < location.accuracy){
+            Log.i(TAG, "Location difference $diff too small for accuracy ${location.accuracy}. Discarding")
+            return
+        }
+
+        val overestimation = sqrt(location.accuracy*location.accuracy+diff*diff)-diff // TODO: Make formula reasonable
+
+        mTotalDistance += diff-overestimation
+
         mLocations.addFirst(location)
         if(mLocations.count() > MAX_LOCATIONS){
             mLocations.removeLast()
@@ -53,9 +74,10 @@ class LocationHelper{
                 continue
             }
             val diffMeters = location.distanceTo(lastLocation)
-            val diffSeconds = (lastLocation.time-location.time)/1000
+            val overestimation = sqrt(location.accuracy*location.accuracy+diffMeters*diffMeters)-diffMeters // TODO: Make formula reasonable
+            val diffSeconds = 0.001*(lastLocation.time-location.time)
             lastLocation = location
-            processedMeters += diffMeters
+            processedMeters += diffMeters-overestimation
             processedSeconds += diffSeconds
             if(processedMeters>meters)
                 break
@@ -64,6 +86,7 @@ class LocationHelper{
             Log.i(TAG, "Only processed $processedSeconds return 0.0")
             return 0.0f
         }
+        Log.i(TAG, "$processedMeters m in $processedSeconds s")
         return (processedMeters/processedSeconds).toFloat()
     }
 
