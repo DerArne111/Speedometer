@@ -1,93 +1,122 @@
 package com.arne.bikestats.utils
 
+import android.content.Context
 import android.location.Location
 import android.util.Log
+import com.arne.bikestats.presentation.MainActivity
+import com.arne.bikestats.presentation.MainActivity.Companion
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileReader
+import java.io.FileWriter
+import java.io.IOException
+import kotlin.math.log
 import kotlin.math.sqrt
 
 
-data class Pace(val paceMin: Int, val paceSec: Int){
-    companion object{
-        fun fromSpeed(speed: Float): Pace{
-            val pace = (1000/60)/speed
+data class Pace(val paceMin: Int, val paceSec: Int) {
+    companion object {
+        fun fromSpeed(speed: Float): Pace {
+            val pace = (1000 / 60) / speed
             val paceMin = pace.toInt()
-            val paceSec = ((pace-paceMin)*60).toInt()
+            val paceSec = ((pace - paceMin) * 60).toInt()
             return Pace(paceMin, paceSec)
         }
-        fun fromSpeed(speed: Double): Pace{
+
+        fun fromSpeed(speed: Double): Pace {
             return fromSpeed(speed.toFloat())
         }
     }
 }
 
-class LocationHelper{
-    companion object{
+class LocationHelper {
+    companion object {
         val TAG = "LocationHelper"
     }
+
     val MAX_LOCATIONS = 64000
-    val ACCURACY_THRESHOLD = 15.0
+    val ACCURACY_THRESHOLD = 150.0
     val MIN_SECONDS_EVAL = 3.0
 
     var mLocations = ArrayDeque<Location>()
     var mTotalDistance = 0.0
 
-
-
-
-    fun addLocationResult(location: Location){
-        if(location.accuracy > ACCURACY_THRESHOLD){
+    fun addLocationResult(location: Location) {
+        if (location.accuracy > ACCURACY_THRESHOLD) {
             Log.i(TAG, "Location above accuracy threshold: ${location.accuracy}. Discarding")
             return
         }
-        if(mLocations.count() == 0){
+        if (mLocations.count() == 0) {
             mLocations.addFirst(location)
             return
         }
         val lastLoc = mLocations.first()
-        if(lastLoc.time > location.time){
+        if (lastLoc.time > location.time) {
             Log.w(TAG, "Time is flowing in the wrong direction!")
             return
         }
         val diff = lastLoc.distanceTo(location)
 
-        if(diff*0.2 < location.accuracy){
-            Log.i(TAG, "Location difference $diff too small for accuracy ${location.accuracy}. Discarding")
+        if (diff * 0.2 < location.accuracy) {
+            Log.i(
+                TAG,
+                "Location difference $diff too small for accuracy ${location.accuracy}. Discarding"
+            )
             return
         }
+        val overestimation =
+            sqrt(location.accuracy * location.accuracy + diff * diff) - diff // TODO: Make formula reasonable
 
-        val overestimation = sqrt(location.accuracy*location.accuracy+diff*diff)-diff // TODO: Make formula reasonable
-
-        mTotalDistance += diff-overestimation
+        mTotalDistance += diff - overestimation
 
         mLocations.addFirst(location)
-        if(mLocations.count() > MAX_LOCATIONS){
+        if (mLocations.count() > MAX_LOCATIONS) {
             mLocations.removeLast()
         }
     }
 
-    fun getAvgSpeed(meters:Int): Float {
+    fun recalculateTotalDistance() {
+        mTotalDistance = 0.0
+        var lastLoc: Location? = null
+        for (location in mLocations) {
+            if (lastLoc == null) {
+                lastLoc = location
+                continue
+            }
+            val diff = lastLoc.distanceTo(location)
+            val overestimation =
+                sqrt(location.accuracy * location.accuracy + diff * diff) - diff // TODO: Make formula reasonable
+            mTotalDistance += diff - overestimation
+            lastLoc = location
+        }
+    }
+
+    fun getAvgSpeed(meters: Int): Float {
         var processedMeters = 0.0
         var processedSeconds = 0.0
         var lastLocation: Location? = null
-        for(location in mLocations){
-            if(lastLocation == null){
+        for (location in mLocations) {
+            if (lastLocation == null) {
                 lastLocation = location
                 continue
             }
             val diffMeters = location.distanceTo(lastLocation)
-            val overestimation = sqrt(location.accuracy*location.accuracy+diffMeters*diffMeters)-diffMeters // TODO: Make formula reasonable
-            val diffSeconds = 0.001*(lastLocation.time-location.time)
+            val overestimation =
+                sqrt(location.accuracy * location.accuracy + diffMeters * diffMeters) - diffMeters // TODO: Make formula reasonable
+            val diffSeconds = 0.001 * (lastLocation.time - location.time)
             lastLocation = location
-            processedMeters += diffMeters-overestimation
+            processedMeters += diffMeters - overestimation
             processedSeconds += diffSeconds
-            if(processedMeters>meters)
+            if (processedMeters > meters)
                 break
         }
-        if(processedSeconds < MIN_SECONDS_EVAL){
+        if (processedSeconds < MIN_SECONDS_EVAL) {
             Log.i(TAG, "Only processed $processedSeconds return 0.0")
             return 0.0f
         }
         Log.i(TAG, "$processedMeters m in $processedSeconds s")
-        return (processedMeters/processedSeconds).toFloat()
+        return (processedMeters / processedSeconds).toFloat()
     }
 
     fun getCurSpeed(): Float {
@@ -95,12 +124,66 @@ class LocationHelper{
         return lastLoc.speed
     }
 
-    fun getTotalDistance(): Double{
+    fun getMaxSpeed(): Float {
+        return mLocations.maxOf { l -> l.speed }
+    }
+
+    fun getTotalDistance(): Double {
         return mTotalDistance
     }
 
     fun clear() {
         mLocations.clear()
         mTotalDistance = 0.0
+    }
+
+    fun save(context: Context) {
+        val logFile = File(context.filesDir, "locations.txt")
+        Log.i(TAG, "Saving to $logFile")
+        if (logFile.exists()) {
+            logFile.delete()
+        }
+        try {
+            logFile.createNewFile()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+        try {
+            //BufferedWriter for performance, true to set append to file flag
+            val buf = BufferedWriter(FileWriter(logFile))
+            for (location in mLocations) {
+                buf.append("${location.time},${location.longitude},${location.latitude},${location.altitude},${location.accuracy}")
+                buf.newLine()
+            }
+            buf.close()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+    }
+
+    fun load(context: Context) {
+        val logFile = File(context.filesDir, "locations.txt")
+        Log.i(TAG, "Loading from $logFile")
+        if (!logFile.exists()) {
+            Log.i(TAG, "File does not exist")
+            return
+        }
+        try {
+            val buf = BufferedReader(FileReader(logFile))
+            for (line in buf.lines()) {
+                val entries = line.split(",")
+                val newLoc = Location("loaded")
+                newLoc.time = entries[0].toLong()
+                newLoc.longitude = entries[1].toDouble()
+                newLoc.latitude = entries[2].toDouble()
+                newLoc.altitude = entries[3].toDouble()
+                newLoc.accuracy = entries[4].toFloat()
+                mLocations.addLast(newLoc)
+            }
+            buf.close()
+            recalculateTotalDistance()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
     }
 }
