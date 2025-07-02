@@ -125,6 +125,8 @@ class LocationHelper {
     }
 
     fun getMaxSpeed(): Float {
+        if(mLocations.isEmpty())
+            return -1.0f
         return mLocations.maxOf { l -> l.speed }
     }
 
