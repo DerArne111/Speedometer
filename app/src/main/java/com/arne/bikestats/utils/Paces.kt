@@ -66,7 +66,7 @@ class LocationHelper {
             return
         }
         val overestimation =
-            sqrt(location.accuracy * location.accuracy + diff * diff) - diff // TODO: Make formula reasonable
+            (sqrt(location.accuracy * location.accuracy + diff * diff) - diff)/2 // TODO: Make formula reasonable
 
         mTotalDistance += diff - overestimation
 
@@ -86,7 +86,7 @@ class LocationHelper {
             }
             val diff = lastLoc.distanceTo(location)
             val overestimation =
-                sqrt(location.accuracy * location.accuracy + diff * diff) - diff // TODO: Make formula reasonable
+                (sqrt(location.accuracy * location.accuracy + diff * diff) - diff)/2 // TODO: Make formula reasonable
             mTotalDistance += diff - overestimation
             lastLoc = location
         }
