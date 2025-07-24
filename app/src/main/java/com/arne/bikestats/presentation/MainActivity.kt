@@ -8,7 +8,6 @@ package com.arne.bikestats.presentation
 
 import android.Manifest
 import android.content.Context
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
@@ -16,7 +15,6 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
 import android.view.MotionEvent
-import android.view.MotionEvent.ACTION_DOWN
 import android.view.MotionEvent.ACTION_UP
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -32,7 +30,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +45,6 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.InputDeviceCompat
 import androidx.core.view.MotionEventCompat
 import androidx.health.services.client.HealthServices
-import androidx.health.services.client.HealthServicesClient
 import androidx.health.services.client.MeasureCallback
 import androidx.health.services.client.MeasureClient
 import androidx.health.services.client.data.Availability
@@ -56,10 +52,8 @@ import androidx.health.services.client.data.DataPointContainer
 import androidx.health.services.client.data.DataType
 import androidx.health.services.client.data.DataTypeAvailability
 import androidx.health.services.client.data.DeltaDataType
-import androidx.health.services.client.unregisterMeasureCallback
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.TimeSource
 import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.TimeTextDefaults
 import com.arne.bikestats.presentation.theme.BikeStatsTheme
@@ -70,7 +64,6 @@ import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
-import com.google.type.DateTime
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -83,6 +76,8 @@ import java.util.TimerTask
 import kotlin.math.max
 import kotlin.math.min
 import androidx.core.content.edit
+import androidx.health.services.client.unregisterMeasureCallback
+import kotlinx.coroutines.runBlocking
 
 
 interface ViewModel {
@@ -121,8 +116,49 @@ class MainActivity : ComponentActivity(), ViewModel {
     val mLocations = LocationHelper()
     var listenersRegistered = false
     var mTimeUpdater: Timer? = null
-    var mLocationListener: FusedLocationProviderClient? = null
+    var mLocationProviderClient: FusedLocationProviderClient? = null
     var mHealthClient: MeasureClient? = null
+    var mLocationCallback = object : LocationCallback() {
+        override fun onLocationAvailability(p0: LocationAvailability) {
+            Log.i(TAG, "onLocationAvailability $p0")
+            if (!p0.isLocationAvailable) {
+                mCurSpeedValid = false
+                mCurSpeed = 0.0
+            }
+        }
+
+        override fun onLocationResult(p0: LocationResult) {
+            if (p0.lastLocation == null)
+                return
+            mLocations.addLocationResult(p0.lastLocation!!)
+            //appendLocationLog(p0.lastLocation!!)
+            mCurSpeed = mLocations.getCurSpeed().toDouble()
+            mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
+            mTotalDistance = mLocations.getTotalDistance()
+            mCurSpeedValid = true
+            if (mCurSpeed > mMaxSpeed) {
+                mMaxSpeed = mCurSpeed
+            }
+        }
+    }
+    var mHeartRateCallback = object : MeasureCallback {
+        override fun onAvailabilityChanged(
+            dataType: DeltaDataType<*, *>,
+            availability: Availability
+        ) {
+            if (availability != DataTypeAvailability.AVAILABLE) {
+                mCurBpmValid = false
+            }
+        }
+
+        override fun onDataReceived(data: DataPointContainer) {
+            mCurBpm = data.getData(DataType.HEART_RATE_BPM).last().value
+            mCurBpmValid = true
+            if (mCurBpm > mMaxBpm) {
+                mMaxBpm = mCurBpm
+            }
+        }
+    }
 
     companion object {
         val TAG = "BikeStats"
@@ -191,55 +227,14 @@ class MainActivity : ComponentActivity(), ViewModel {
             return
         }
         mHealthClient = HealthServices.getClient(applicationContext).measureClient
-        val heartRateCallback = object : MeasureCallback {
-            override fun onAvailabilityChanged(
-                dataType: DeltaDataType<*, *>,
-                availability: Availability
-            ) {
-                if (availability != DataTypeAvailability.AVAILABLE) {
-                    mCurBpmValid = false
-                }
-            }
+        mHealthClient!!.registerMeasureCallback(DataType.HEART_RATE_BPM, mHeartRateCallback)
 
-            override fun onDataReceived(data: DataPointContainer) {
-                mCurBpm = data.getData(DataType.HEART_RATE_BPM).last().value
-                mCurBpmValid = true
-                if (mCurBpm > mMaxBpm) {
-                    mMaxBpm = mCurBpm
-                }
-            }
-        }
-        mHealthClient!!.registerMeasureCallback(DataType.HEART_RATE_BPM, heartRateCallback)
-
-        mLocationListener =
+        mLocationProviderClient =
             LocationServices.getFusedLocationProviderClient(applicationContext)
-        val locationCallback = object : LocationCallback() {
-            override fun onLocationAvailability(p0: LocationAvailability) {
-                Log.i(TAG, "onLocationAvailability $p0")
-                if (!p0.isLocationAvailable) {
-                    mCurSpeedValid = false
-                    mCurSpeed = 0.0
-                }
-            }
-
-            override fun onLocationResult(p0: LocationResult) {
-                if (p0.lastLocation == null)
-                    return
-                mLocations.addLocationResult(p0.lastLocation!!)
-                //appendLocationLog(p0.lastLocation!!)
-                mCurSpeed = mLocations.getCurSpeed().toDouble()
-                mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
-                mTotalDistance = mLocations.getTotalDistance()
-                mCurSpeedValid = true
-                if (mCurSpeed > mMaxSpeed) {
-                    mMaxSpeed = mCurSpeed
-                }
-            }
-        }
         val locationRequest = LocationRequest.Builder(1000)
             .setPriority(android.location.LocationRequest.QUALITY_HIGH_ACCURACY)
             .setMinUpdateIntervalMillis(1000).build()
-        mLocationListener!!.requestLocationUpdates(locationRequest, locationCallback, null)
+        mLocationProviderClient!!.requestLocationUpdates(locationRequest, mLocationCallback, null)
 
         mTimeUpdater = Timer()
         mTimeUpdater!!.schedule(object : TimerTask() {
@@ -252,8 +247,19 @@ class MainActivity : ComponentActivity(), ViewModel {
         listenersRegistered = true
     }
 
+    fun unregisterListeners(){
+        if(!listenersRegistered)
+            return
+        mLocationProviderClient?.removeLocationUpdates(mLocationCallback)
+        mTimeUpdater?.cancel()
+        runBlocking {
+            mHealthClient?.unregisterMeasureCallback(DataType.Companion.HEART_RATE_BPM, mHeartRateCallback)
+        }
+    }
+
     override fun onPause() {
         super.onPause()
+        unregisterListeners()
         if (!mKeepScreenOn)
             finish()
     }
