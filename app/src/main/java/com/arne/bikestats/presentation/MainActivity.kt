@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity(), ViewModel {
     override var mCurrentTime by mutableStateOf("-")
 
     val mLocations = LocationHelper()
-    var listenersRegistered = false
+    var mListenersRegistered = false
     var mTimeUpdater: Timer? = null
     var mLocationProviderClient: FusedLocationProviderClient? = null
     var mHealthClient: MeasureClient? = null
@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity(), ViewModel {
     }
 
     fun registerListeners() {
-        if (listenersRegistered) {
+        if (mListenersRegistered) {
             return
         }
 
@@ -244,17 +244,18 @@ class MainActivity : ComponentActivity(), ViewModel {
                 }
             }
         }, 0, 1000)
-        listenersRegistered = true
+        mListenersRegistered = true
     }
 
     fun unregisterListeners(){
-        if(!listenersRegistered)
+        if(!mListenersRegistered)
             return
         mLocationProviderClient?.removeLocationUpdates(mLocationCallback)
         mTimeUpdater?.cancel()
         runBlocking {
             mHealthClient?.unregisterMeasureCallback(DataType.Companion.HEART_RATE_BPM, mHeartRateCallback)
         }
+        mListenersRegistered = false
     }
 
     override fun onPause() {
