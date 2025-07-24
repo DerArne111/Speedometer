@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity(), ViewModel {
                 return
             mLocations.addLocationResult(p0.lastLocation!!)
             //appendLocationLog(p0.lastLocation!!)
-            mCurSpeed = mLocations.getCurSpeed().toDouble()
+            mCurSpeed = p0.lastLocation!!.speed.toDouble()
             mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
             mTotalDistance = mLocations.getTotalDistance()
             mCurSpeedValid = true
