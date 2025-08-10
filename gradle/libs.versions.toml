@@ -1,5 +1,5 @@
 [versions]
-agp = "8.6.1"
+agp = "8.10.1"
 kotlin = "1.9.25"
 playServicesWearable = "19.0.0"
 composeBom = "2025.06.01"
@@ -17,6 +17,9 @@ playServicesLocation = "21.3.0"
 material3Android = "1.3.2"
 firebasePerfKtx = "21.0.5"
 firebaseCrashlyticsBuildtools = "3.0.4"
+androidGpxParser = "2.3.1"
+junit = "4.12"
+junitKtx = "1.3.0"
 
 [libraries]
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
@@ -40,6 +43,9 @@ play-services-location = { group = "com.google.android.gms", name = "play-servic
 material3-android = { group = "androidx.compose.material3", name = "material3-android", version.ref = "material3Android" }
 firebase-perf-ktx = { group = "com.google.firebase", name = "firebase-perf-ktx", version.ref = "firebasePerfKtx" }
 firebase-crashlytics-buildtools = { group = "com.google.firebase", name = "firebase-crashlytics-buildtools", version.ref = "firebaseCrashlyticsBuildtools" }
+android-gpx-parser = { group = "com.github.ticofab", name = "android-gpx-parser", version.ref = "androidGpxParser" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+junit-ktx = { group = "androidx.test.ext", name = "junit-ktx", version.ref = "junitKtx" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

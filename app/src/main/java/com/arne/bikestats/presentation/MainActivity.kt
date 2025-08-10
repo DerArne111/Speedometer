@@ -57,7 +57,6 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.TimeTextDefaults
 import com.arne.bikestats.presentation.theme.BikeStatsTheme
-import com.arne.bikestats.utils.LocationHelper
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationCallback
@@ -77,6 +76,10 @@ import kotlin.math.max
 import kotlin.math.min
 import androidx.core.content.edit
 import androidx.health.services.client.unregisterMeasureCallback
+import com.arne.bikestats.R
+import com.arne.bikestats.location.CourseLocationProcessor
+import com.arne.bikestats.location.GpsLocationProcessor
+import com.arne.bikestats.location.LocationProcessor
 import kotlinx.coroutines.runBlocking
 
 
@@ -93,11 +96,13 @@ interface ViewModel {
     var mTotalDistance: Double // total distance since last reset
     var mPaceMode: Boolean // show pace (as opposed to speed)
     var mCurrentTime: String // formated time
+    var mLocationMode: String // Selected location processor
 }
 
 class MainActivity : ComponentActivity(), ViewModel {
 
     val AVERAGE_DISTANCES = listOf(50, 200, 1000, 2000, 5000, 10000, 20000, 50000)
+    val COURSE_RESOURCE = R.raw.munich_north_10k
     var mAverageDistanceIndex = 3
 
     override var mCurSpeed by mutableStateOf(-1.0)
@@ -112,8 +117,12 @@ class MainActivity : ComponentActivity(), ViewModel {
     override var mTotalDistance by mutableStateOf(-1.0)
     override var mPaceMode by mutableStateOf(false)
     override var mCurrentTime by mutableStateOf("-")
+    override var mLocationMode by mutableStateOf("")
 
-    val mLocations = LocationHelper()
+    lateinit var mLocationProcessors: List<LocationProcessor>
+    lateinit var mLocations: LocationProcessor
+    var mLocationProcessorIndex = 0
+
     var mListenersRegistered = false
     var mTimeUpdater: Timer? = null
     var mLocationProviderClient: FusedLocationProviderClient? = null
@@ -130,8 +139,9 @@ class MainActivity : ComponentActivity(), ViewModel {
         override fun onLocationResult(p0: LocationResult) {
             if (p0.lastLocation == null)
                 return
-            mLocations.addLocationResult(p0.lastLocation!!)
-            //appendLocationLog(p0.lastLocation!!)
+            for(locationProcessor in mLocationProcessors){
+                locationProcessor.addLocationResult(p0.lastLocation!!)
+            }
             mCurSpeed = p0.lastLocation!!.speed.toDouble()
             mAvgSpeed = mLocations.getAvgSpeed(mAvgDistance).toDouble()
             mTotalDistance = mLocations.getTotalDistance()
@@ -168,10 +178,16 @@ class MainActivity : ComponentActivity(), ViewModel {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
+        val gpsLocationProcessor = GpsLocationProcessor()
+        val courseLocationProcessor = CourseLocationProcessor()
+        courseLocationProcessor.loadGpx(applicationContext.resources.openRawResource(COURSE_RESOURCE))
+        mLocationProcessors = listOf(gpsLocationProcessor, courseLocationProcessor)
+        mLocations = mLocationProcessors[mLocationProcessorIndex]
+        mLocationMode = mLocations.getName()
+
         load()
 
         setTheme(android.R.style.Theme_DeviceDefault)
-
         setContent {
             WearApp(this)
         }
@@ -271,7 +287,9 @@ class MainActivity : ComponentActivity(), ViewModel {
     }
 
     fun save() {
-        mLocations.save(applicationContext)
+        for(locationProcessor in mLocationProcessors){
+            locationProcessor.save(applicationContext)
+        }
         val sharedPref = this.getPreferences(Context.MODE_PRIVATE)
         sharedPref.edit {
             putFloat("max_bpm", mMaxBpm.toFloat())
@@ -281,7 +299,9 @@ class MainActivity : ComponentActivity(), ViewModel {
     }
 
     fun load() {
-        mLocations.load(applicationContext)
+        for(locationProcessor in mLocationProcessors){
+            locationProcessor.load(applicationContext)
+        }
         mMaxSpeed = mLocations.getMaxSpeed().toDouble()
         mTotalDistance = mLocations.getTotalDistance()
 
@@ -326,6 +346,11 @@ class MainActivity : ComponentActivity(), ViewModel {
                             mMaxBpm = 0.0
                             mTotalDistance = 0.0
                             mLocations.clear()
+                        }
+                        if (mTapCount == 4) {
+                            mLocationProcessorIndex = (mLocationProcessorIndex+1)%mLocationProcessors.size
+                            mLocations = mLocationProcessors[mLocationProcessorIndex]
+                            mLocationMode = mLocations.getName()
                         }
                         mTapCount = 0
                     }
@@ -537,8 +562,9 @@ fun DataQuality(viewModel: ViewModel) {
     //    text += "⌖"
     //if (viewModel.mCurBpmValid)
     //    text += "♥"
+    text = "${viewModel.mLocationMode} "
     if (viewModel.mKeepScreenOn)
-        text += "\uD83D\uDD12"
+        text += "\uD83D\uDD12 "
     Text(
         modifier = Modifier.fillMaxWidth(),
         textAlign = TextAlign.Center,
@@ -567,6 +593,6 @@ fun DefaultPreview() {
         override var mCurBpmValid: Boolean = true
         override var mCurSpeedValid: Boolean = true
         override var mKeepScreenOn: Boolean = true
-
+        override var mLocationMode: String = "GPS"
     })
 }
